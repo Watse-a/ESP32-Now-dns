@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>按钮设置</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #121417; color: #e6e8eb; padding: 16px; min-height: 100vh; }
+  .card { background: #1e2126; border-radius: 12px; padding: 18px 16px; max-width: 420px; margin: 0 auto; }
+  label { display: block; font-size: 13px; color: #9aa0a6; margin: 10px 0 4px; }
+  input { width: 100%; padding: 11px; border-radius: 8px; border: 1px solid #33383f;
+          background: #121417; color: #e6e8eb; font-size: 15px; }
+  input.mac { font-family: monospace; letter-spacing: 0.5px; }
+  .row { display: flex; gap: 10px; margin-top: 16px; }
+  button { flex: 1; padding: 11px; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; }
+  .primary { background: #2f7d63; color: #fff; }
+  .ghost { background: #3a3f46; color: #e6e8eb; }
+  .tip { font-size: 12px; color: #9aa0a6; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <label for="title-input">标题名称</label>
+    <input type="text" id="title-input" maxlength="24" placeholder="请输入标题" spellcheck="false">
+
+    <label for="mac-input">绑定从机 MAC</label>
+    <input type="text" class="mac" id="mac-input" maxlength="17" placeholder="AA:BB:CC:DD:EE:FF" spellcheck="false">
+    <div class="tip">填写后保存即可注册为该按钮的 ESP-NOW 对端；留空则不绑定。</div>
+
+    <div class="row">
+      <button class="ghost" id="btn-back">返回</button>
+      <button class="primary" id="btn-save">保存</button>
+    </div>
+  </div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const idx = Math.min(1, Math.max(0, parseInt(params.get('i') || '0', 10)));
+  const titleInput = document.getElementById('title-input');
+  const macInput = document.getElementById('mac-input');
+
+  async function load() {
+    try {
+      const r = await fetch('/api/button?i=' + idx);
+      const d = await r.json();
+      if (d.ok) {
+        titleInput.value = d.title || '';
+        macInput.value = d.mac || '';
+      }
+    } catch (e) {}
+  }
+
+  document.getElementById('btn-back').onclick = () => { location.href = '/'; };
+
+  document.getElementById('btn-save').onclick = async () => {
+    const title = titleInput.value.trim();
+    const mac = macInput.value.trim().toUpperCase();
+    if (!title) { alert('标题不能为空'); return; }
+    if (mac && !/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) {
+      alert('MAC 格式应为 AA:BB:CC:DD:EE:FF');
+      return;
+    }
+    const r = await fetch('/api/button', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index: idx, title, mac })
+    });
+    const res = await r.json();
+    if (res.ok) { alert('已保存'); location.href = '/'; }
+    else { alert(res.err || '保存失败'); }
+  };
+
+  load();
+</script>
+</body>
+</html>
