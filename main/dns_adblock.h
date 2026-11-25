@@ -21,6 +21,9 @@ int  dns_adblock_bl_list(char *out, size_t cap);
 esp_err_t dns_adblock_bl_add(const char *d);
 esp_err_t dns_adblock_bl_del(const char *d);
 esp_err_t dns_adblock_clear_blocked(void);   /* 清空累计拦截数（内存+NVS） */
+esp_err_t dns_adblock_clear_total(void);     /* 只清累计拦截总数（内存+NVS） */
+esp_err_t dns_adblock_clear_blocks(void);    /* 只清本次运行拦截域名列表 */
+esp_err_t dns_adblock_clear_fails(void);     /* 只清本次运行上游无应答域名列表 */
 
 #ifdef __cplusplus
 }

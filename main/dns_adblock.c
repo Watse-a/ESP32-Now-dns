@@ -122,6 +122,8 @@ static bool s_on = false;
 static bool s_running = false;
 static int s_user_count = 0;
 static int s_block_count = 0;
+static int s_run_blocked = 0;   /* 本次运行（开机以来）拦截次数，不落盘 */
+static int s_run_fails = 0;     /* 本次运行（开机以来）上游无应答次数，不落盘 */
 static char s_last_update[32] = "--";
 static int s_last_day = -1;
 static volatile bool s_updating = false;
@@ -230,6 +232,7 @@ static portMUX_TYPE s_fail_mux = portMUX_INITIALIZER_UNLOCKED;
 static void fail_log_add(const char *domain)
 {
     if (!domain || !*domain) return;
+    s_run_fails++;
     portENTER_CRITICAL(&s_fail_mux);
     for (int i = 0; i < s_fail_cnt; i++) {
         if (strcmp(s_fail[i].domain, domain) == 0) {
@@ -1049,6 +1052,7 @@ static void dns_rx_task(void *arg)
             int plen = build_blocked(rpl, buf, qend_off, qtype);
             int sent = sendto(s_sock, rpl, plen, 0, (struct sockaddr*)&cli, cl);
             s_block_count++;
+            s_run_blocked++;
             block_log_add(cip, q);
             blk_total_save();   /* 拦截后尽快落盘，避免掉电丢失累计数 */
             ESP_LOGI(TAG, "拦[%s] %s -> %s:%d 回 %d 字节(%s) 累计 %d",
@@ -1219,8 +1223,50 @@ esp_err_t dns_adblock_clear_blocked(void)
 
     memset(s_cli, 0, sizeof(s_cli));          /* 客户端列表 */
     s_cli_n = 0;
+    s_run_blocked = 0;                        /* 本次运行计数 */
+    s_run_fails = 0;
 
     ESP_LOGI(TAG, "已清除数据：累计拦截数、客户端列表、拦截域名、上游无应答域名");
+    return ESP_OK;
+}
+
+/* 只清已拦截总数（内存 + NVS），保留本次运行的域名流水 */
+esp_err_t dns_adblock_clear_total(void)
+{
+    s_block_count = 0;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, KEY_BLK_TOTAL, 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "已清除累计拦截总数（本次运行流水保留）");
+    return ESP_OK;
+}
+
+/* 只清本次运行的拦截域名列表（连同本次运行拦截次数） */
+esp_err_t dns_adblock_clear_blocks(void)
+{
+    portENTER_CRITICAL(&s_blog_mux);
+    memset(s_blog, 0, sizeof(s_blog));
+    s_blog_idx = 0;
+    s_blog_cnt = 0;
+    portEXIT_CRITICAL(&s_blog_mux);
+    s_run_blocked = 0;
+    ESP_LOGI(TAG, "已清除本次运行的拦截域名列表");
+    return ESP_OK;
+}
+
+/* 只清本次运行的上游无应答域名列表（连同本次运行次数） */
+esp_err_t dns_adblock_clear_fails(void)
+{
+    portENTER_CRITICAL(&s_fail_mux);
+    memset(s_fail, 0, sizeof(s_fail));
+    s_fail_idx = 0;
+    s_fail_cnt = 0;
+    portEXIT_CRITICAL(&s_fail_mux);
+    s_run_fails = 0;
+    ESP_LOGI(TAG, "已清除本次运行的上游无应答域名列表");
     return ESP_OK;
 }
 
@@ -1238,8 +1284,9 @@ static int cache_live_used(void)
 
 void dns_adblock_status(char *buf, size_t len)
 {
-    int n = snprintf(buf,len,"{\"on\":%s,\"rules\":%d,\"blocked\":%d,\"last\":\"%s\",\"upstream\":\"%s\",\"up_ok\":%s,\"cache\":%d,\"cache_n\":%d,\"cache_hit\":%d,\"cache_store\":%d,\"cache_skip\":%d,\"cache_on\":%s,\"updating\":%s,\"msg\":\"%s\",\"clients\":[",
-             s_on?"true":"false", s_user_count, s_block_count, s_last_update, UPSTREAM_HOST,
+    int n = snprintf(buf,len,"{\"on\":%s,\"rules\":%d,\"blocked\":%d,\"run_blocked\":%d,\"run_fails\":%d,\"last\":\"%s\",\"upstream\":\"%s\",\"up_ok\":%s,\"cache\":%d,\"cache_n\":%d,\"cache_hit\":%d,\"cache_store\":%d,\"cache_skip\":%d,\"cache_on\":%s,\"updating\":%s,\"msg\":\"%s\",\"clients\":[",
+             s_on?"true":"false", s_user_count, s_block_count, s_run_blocked, s_run_fails,
+             s_last_update, UPSTREAM_HOST,
              up_n>0?"true":"false",
              cache_live_used(), CACHE_N, s_cache_hits, s_cache_store, s_cache_skip,
              s_cache?"true":"false", s_updating?"true":"false", s_upd_msg);
@@ -1262,7 +1309,8 @@ void dns_adblock_status(char *buf, size_t len)
     n += snprintf(buf + n, len - n, "],\"fails\":[");
     for (int i = 0; i < s_fail_cnt && n < (int)len - 80; i++) {
         int idx = (s_fail_idx - 1 - i + FAIL_LOG_N * 2) % FAIL_LOG_N;
-        n += snprintf(buf + n, len - n, "%s\"%s\"", i ? "," : "", s_fail[idx].domain);
+        n += snprintf(buf + n, len - n, "%s{\"d\":\"%s\",\"n\":%u}",
+                      i ? "," : "", s_fail[idx].domain, (unsigned)s_fail[idx].n);
     }
     n += snprintf(buf + n, len - n, "]}");
     n = strlen(buf);
@@ -1459,6 +1507,8 @@ void dns_adblock_start(void)
     s_cache_hits = 0;
     s_cache_store = 0;
     s_cache_skip = 0;
+    s_run_blocked = 0;
+    s_run_fails = 0;
     ESP_LOGI(TAG, "运行期记录已清零（缓存/拦截域名/上游无应答），累计拦截数保持 %d", s_block_count);
     cache_init();
     /* 收包/转发分两个任务：收包秒回拦截与缓存，转发任务独占慢上游（DoT）。

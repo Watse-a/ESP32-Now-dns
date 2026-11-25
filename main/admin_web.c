@@ -603,7 +603,7 @@ static esp_err_t button_send_post(httpd_req_t *req)
 
 static esp_err_t dns_status_get(httpd_req_t *req)
 {
-    static char buf[8192];   /* 含 20 条拦截记录 + 白/黑各 64 条 + 20 条无应答域名，过小会截断导致 JSON 解析失败 */
+    static char buf[10240];   /* 含 20 条拦截记录 + 白/黑各 64 条 + 20 条无应答域名（带次数），过小会截断导致 JSON 解析失败 */
     dns_adblock_status(buf, sizeof(buf));
     return send_json(req, buf);
 }
@@ -659,6 +659,25 @@ static esp_err_t dns_update_post(httpd_req_t *req)
 static esp_err_t dns_clear_post(httpd_req_t *req)
 {
     dns_adblock_clear_blocked();
+    return send_json(req, "{\"ok\":1}");
+}
+
+/* 三个独立清除：只清累计拦截总数 / 本次拦截域名列表 / 本次上游无应答列表 */
+static esp_err_t dns_clear_total_post(httpd_req_t *req)
+{
+    dns_adblock_clear_total();
+    return send_json(req, "{\"ok\":1}");
+}
+
+static esp_err_t dns_clear_blocks_post(httpd_req_t *req)
+{
+    dns_adblock_clear_blocks();
+    return send_json(req, "{\"ok\":1}");
+}
+
+static esp_err_t dns_clear_fails_post(httpd_req_t *req)
+{
+    dns_adblock_clear_fails();
     return send_json(req, "{\"ok\":1}");
 }
 
@@ -779,6 +798,9 @@ void admin_web_start(void)
     httpd_uri_t dnsup = {.uri = "/api/dns/update", .method = HTTP_POST, .handler = dns_update_post};
     httpd_uri_t dnswl = {.uri = "/api/dns/whitelist", .method = HTTP_POST, .handler = dns_wl_post};
     httpd_uri_t dnsclr = {.uri = "/api/dns/clear", .method = HTTP_POST, .handler = dns_clear_post};
+    httpd_uri_t dnsclrt = {.uri = "/api/dns/clear_total",  .method = HTTP_POST, .handler = dns_clear_total_post};
+    httpd_uri_t dnsclrb = {.uri = "/api/dns/clear_blocks", .method = HTTP_POST, .handler = dns_clear_blocks_post};
+    httpd_uri_t dnsclrf = {.uri = "/api/dns/clear_fails",  .method = HTTP_POST, .handler = dns_clear_fails_post};
     httpd_uri_t ota    = {.uri = "/api/ota",        .method = HTTP_POST, .handler = ota_post};
     httpd_uri_t btnpg = {.uri = "/button.html",    .method = HTTP_GET,  .handler = button_page_get};
     httpd_uri_t btng  = {.uri = "/api/button",     .method = HTTP_GET,  .handler = button_get};
@@ -803,6 +825,9 @@ void admin_web_start(void)
     httpd_register_uri_handler(s_server, &dnsup);
     httpd_register_uri_handler(s_server, &dnswl);
     httpd_register_uri_handler(s_server, &dnsclr);
+    httpd_register_uri_handler(s_server, &dnsclrt);
+    httpd_register_uri_handler(s_server, &dnsclrb);
+    httpd_register_uri_handler(s_server, &dnsclrf);
     httpd_register_uri_handler(s_server, &ota);
     httpd_register_uri_handler(s_server, &btnpg);
     httpd_register_uri_handler(s_server, &btng);

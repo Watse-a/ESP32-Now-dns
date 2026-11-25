@@ -153,7 +153,7 @@
     <div class="card">
       <div class="row"><span class="k">上游 DNS</span><span style="display:flex;align-items:center;gap:6px"><span id="dns-up">--</span><span id="dns-up-dot" class="status-dot"></span></span></div>
       <div class="row"><span class="k">规则数</span><span id="dns-rules">--</span></div>
-      <div class="row"><span class="k">已拦截总数</span><span id="dns-blocked" class="blk-dom">--</span></div>
+      <div class="row"><span class="k">已拦截总数</span><span id="dns-blocked" class="blk-dom" style="cursor:pointer" title="点击清除累计拦截总数">--</span></div>
       <div class="row"><span class="k">缓存</span><span id="dns-cache">--</span></div>
       <div class="row"><span class="k">更新时间</span><span id="dns-last">--</span></div>
       <button id="btn-dns-update" class="alt">拉取最新规则</button>
@@ -170,7 +170,7 @@
     </div>
 
     <div class="card">
-      <h2>拦截域名 <span id="dns-blk-count" class="blk-dom" style="font-size:12px"></span></h2>
+      <h2>拦截域名 <span id="dns-blk-count" class="blk-dom" style="font-size:12px"></span><span id="dns-blk-total" class="blk-dom" style="font-size:12px;margin-left:auto"></span></h2>
       <table>
         <thead><tr><th>客户端 IP</th><th style="text-align:right">拦截域名</th></tr></thead>
         <tbody id="dns-blk-rows"></tbody>
@@ -178,9 +178,9 @@
     </div>
 
     <div class="card">
-      <h2>上游无应答域名 <span class="muted" style="font-size:12px">（最多 20 条）</span></h2>
+      <h2>上游无应答域名 <span class="muted" style="font-size:12px">（最多 20 条）</span><span id="dns-fail-total" class="blk-dom" style="font-size:12px;margin-left:auto"></span></h2>
       <table>
-        <thead><tr><th>域名</th></tr></thead>
+        <thead><tr><th>域名</th><th style="text-align:right">次数</th></tr></thead>
         <tbody id="dns-fail-rows"></tbody>
       </table>
     </div>
@@ -203,7 +203,10 @@
     </div>
 
     <div class="card">
-      <button id="btn-dns-clear" class="danger">清除数据</button>
+      <div class="btn-row">
+        <button id="btn-dns-clear-blocks" class="danger" style="font-size:13px;padding:10px 6px;line-height:1.3">清除拦截域名</button>
+        <button id="btn-dns-clear-fails" class="danger" style="font-size:13px;padding:10px 6px;line-height:1.3">清除无应答域名</button>
+      </div>
     </div>
 
   </div>
@@ -545,14 +548,17 @@ function renderDns(d){
     document.getElementById('dns-msg').textContent = d.msg || '';
     const blk = d.blocks || [];
     document.getElementById('dns-blk-count').textContent = blk.length ? '(' + blk.length + ')' : '';
+    document.getElementById('dns-blk-total').textContent = '×' + (d.run_blocked || 0);
     document.getElementById('dns-blk-rows').innerHTML = blk.length
       ? blk.map(b => '<tr><td>' + b.ip + '</td><td style="text-align:right"><span class="blk-dom">' + b.domain +
       '</span><span class="muted" style="font-size:12px"> ×' + (b.n || 1) + '</span></td></tr>').join('')
       : '<tr><td colspan="2" style="color:#9aa0a6">暂无拦截记录</td></tr>';
     const fails = d.fails || [];
+    document.getElementById('dns-fail-total').textContent = '×' + (d.run_fails || 0);
     document.getElementById('dns-fail-rows').innerHTML = fails.length
-      ? fails.map(w => '<tr><td><span class="blk-dom">' + w + '</span></td></tr>').join('')
-      : '<tr><td style="color:#9aa0a6">暂无上游无应答域名</td></tr>';
+      ? fails.map(f => '<tr><td><span class="blk-dom">' + f.d +
+        '</span></td><td style="text-align:right"><span class="muted" style="font-size:12px">×' + (f.n || 1) + '</span></td></tr>').join('')
+      : '<tr><td colspan="2" style="color:#9aa0a6">暂无上游无应答域名</td></tr>';
     const wl = d.wl || [];
     document.getElementById('dns-wl-rows').innerHTML = wl.length
       ? wl.map(w => '<tr><td>' + w + '</td><td style="text-align:right"><button class="small danger wl-del" data-type="wl" data-d="' + w + '">删除</button></td></tr>').join('')
@@ -600,13 +606,17 @@ document.getElementById('btn-dns-update').onclick = async () => {
   }catch(e){}
   btn.disabled = false; btn.textContent = '拉取最新规则';
 };
-document.getElementById('btn-dns-clear').onclick = async () => {
-  if (!confirm('确定清除客户端列表、拦截域名、上游无应答域名和累计拦截总数吗？此操作不可恢复。')) return;
-  try{
-    await fetch('/api/dns/clear',{method:'POST'});
-  }catch(e){}
+async function clearDns(path, msg){
+  if (!confirm(msg + '\n此操作不可恢复。')) return;
+  try{ await fetch(path,{method:'POST'}); }catch(e){}
   refreshDns();
-};
+}
+document.getElementById('dns-blocked').onclick = () =>
+  clearDns('/api/dns/clear_total', '确定清除「已拦截总数」吗？（本次运行的拦截域名列表保留）');
+document.getElementById('btn-dns-clear-blocks').onclick = () =>
+  clearDns('/api/dns/clear_blocks', '确定清除「本次运行的拦截域名列表」吗？（已拦截总数保留）');
+document.getElementById('btn-dns-clear-fails').onclick = () =>
+  clearDns('/api/dns/clear_fails', '确定清除「本次运行的上游无应答域名列表」吗？');
 /* ---- OTA：选本地 bin 直接上传，写完板子自动重启 ---- */
 (function(){
   const btn = document.getElementById('btn-ota');
